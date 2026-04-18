@@ -1,14 +1,27 @@
-# 评测输出
+# Evaluation outputs
 eval_results/
 compare_results/
 
-# 可视化结果
+# Visualization outputs (keep README only)
+visualize/*.jpg
+visualize/*.png
+
+# Test results
 test_result_*.jpg
+
+# Data (symlinked, not tracked)
+data/VOCdevkit
 
 # Python
 __pycache__/
 *.pyc
+*.pyo
 
-# HuggingFace 缓存
+# Model weights
 *.bin
 *.safetensors
+*.gguf
+
+# OS
+.DS_Store
+Thumbs.db

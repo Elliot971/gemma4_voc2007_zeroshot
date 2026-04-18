@@ -1,19 +1,19 @@
 """
-eval_voc.py - Gemma-4 E2B 在 VOC 2007 test 上的零样本目标检测 mAP 评测
+eval_voc.py - Zero-shot object detection mAP evaluation on VOC 2007 test.
 
-核心设计:
-  1. 逐张推理 VOC 2007 test (4952 张)
-  2. 解析 Gemma 输出为 VOC 格式检测结果
-  3. 复用 PLN 项目的 voc_eval.py 计算 mAP (确保同一把尺子)
-  4. 支持断点续传 (checkpoint), 避免推理中断后从头开始
-  5. 保存逐张原始输出, 便于后续分析 prompt 质量
+Core design:
+  1. Run Gemma-4 E2B inference on every VOC 2007 test image (4952 total)
+  2. Parse model output into VOC-format detections
+  3. Reuse voc_eval.py from the PLN project (same evaluation ruler)
+  4. Checkpoint support to resume after interruption
+  5. Save per-image raw outputs for prompt quality analysis
 
-用法:
-  # AutoDL 4090 (推荐)
+Usage:
+  # AutoDL 4090 (recommended)
   export HF_ENDPOINT=https://hf-mirror.com
   python eval_voc.py --voc-root /root/autodl-tmp/PLN-ResNet18/data/VOCdevkit/VOC2007
 
-  # 本地 4060 (4-bit 量化, 仅用于 debug 少量图)
+  # Local 4060 (4-bit quantized, debug only)
   python eval_voc.py --quantize-4bit --max-images 10
 """
 
@@ -30,7 +30,7 @@ import torch
 from PIL import Image
 from tqdm import tqdm
 
-# 将项目根目录加入 sys.path
+# Add project root to sys.path
 _PROJECT_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(_PROJECT_ROOT))
 sys.path.insert(0, str(_PROJECT_ROOT / "scripts"))
@@ -47,7 +47,7 @@ from utils.voc_eval import voc_eval
 
 
 def load_voc_ground_truths(voc_root: Path, img_ids: list):
-    """读取 VOC XML 标注, 返回 voc_eval 所需格式"""
+    """Load VOC XML annotations into the format expected by voc_eval."""
     import xml.etree.ElementTree as ET
 
     class_to_idx = {name: i for i, name in enumerate(VOC_CLASSES)}
@@ -62,7 +62,7 @@ def load_voc_ground_truths(voc_root: Path, img_ids: list):
             tree = ET.parse(str(ann_path))
             root = tree.getroot()
             for obj in root.findall("object"):
-                # 跳过 difficult 标注 (VOC 标准协议)
+                # Skip difficult annotations (standard VOC protocol)
                 difficult = obj.find("difficult")
                 if difficult is not None and int(difficult.text) == 1:
                     continue
@@ -99,7 +99,7 @@ def load_voc_ground_truths(voc_root: Path, img_ids: list):
 
 
 def detections_to_voc_format(detections: list):
-    """将 parse_detections 输出转换为 voc_eval 所需的 numpy 格式"""
+    """Convert parse_detections output to numpy format for voc_eval."""
     class_to_idx = {name: i for i, name in enumerate(VOC_CLASSES)}
 
     if not detections:
@@ -125,13 +125,13 @@ def detections_to_voc_format(detections: list):
 
 
 def save_checkpoint(ckpt_path: str, results: dict):
-    """保存断点续传数据"""
+    """Save checkpoint for resumable inference."""
     with open(ckpt_path, "w") as f:
         json.dump(results, f, ensure_ascii=False)
 
 
 def load_checkpoint(ckpt_path: str):
-    """加载断点续传数据"""
+    """Load checkpoint from a previous interrupted run."""
     if os.path.exists(ckpt_path):
         with open(ckpt_path) as f:
             return json.load(f)
@@ -139,22 +139,24 @@ def load_checkpoint(ckpt_path: str):
 
 
 def main():
-    parser = argparse.ArgumentParser(description="Gemma-4 E2B VOC 2007 零样本 mAP 评测")
-    parser.add_argument("--voc-root", type=str, default=None, help="VOC2007 根目录路径")
+    parser = argparse.ArgumentParser(
+        description="Gemma-4 E2B zero-shot mAP evaluation on VOC 2007 test"
+    )
+    parser.add_argument("--voc-root", type=str, default=None, help="VOC2007 root path")
     parser.add_argument(
-        "--quantize-4bit", action="store_true", help="4-bit 量化 (8GB 显存)"
+        "--quantize-4bit", action="store_true", help="4-bit quantization (8GB VRAM)"
     )
     parser.add_argument("--model-id", type=str, default="google/gemma-4-E2B-it")
     parser.add_argument(
-        "--max-images", type=int, default=None, help="最多评测图片数 (debug 用)"
+        "--max-images", type=int, default=None, help="Max images to evaluate (debug)"
     )
     parser.add_argument(
-        "--output-dir", type=str, default="eval_results", help="评测结果输出目录"
+        "--output-dir", type=str, default="eval_results", help="Output directory"
     )
-    parser.add_argument("--resume", action="store_true", help="从上次断点继续")
+    parser.add_argument("--resume", action="store_true", help="Resume from checkpoint")
     args = parser.parse_args()
 
-    # 查找 VOC 数据
+    # Locate VOC dataset
     if args.voc_root:
         voc_root = Path(args.voc_root)
     else:
@@ -162,24 +164,24 @@ def main():
 
         voc_root = find_voc_root()
 
-    print(f"VOC 数据集: {voc_root}")
+    print(f"VOC dataset: {voc_root}")
 
-    # 读取 test 集图片列表
+    # Load test split image list
     test_file = voc_root / "ImageSets" / "Main" / "test.txt"
     with open(test_file) as f:
         img_ids = [line.strip() for line in f if line.strip()]
 
     if args.max_images:
         img_ids = img_ids[: args.max_images]
-    print(f"评测图片数: {len(img_ids)}")
+    print(f"Number of images: {len(img_ids)}")
 
-    # 输出目录
+    # Output directory
     output_dir = Path(args.output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
     ckpt_path = str(output_dir / "checkpoint.json")
     raw_outputs_path = str(output_dir / "raw_outputs.json")
 
-    # 断点续传
+    # Resume from checkpoint
     raw_outputs = {}  # img_id -> raw_text
     start_idx = 0
     if args.resume:
@@ -187,28 +189,28 @@ def main():
         if ckpt:
             raw_outputs = ckpt.get("raw_outputs", {})
             start_idx = len(raw_outputs)
-            print(f"从断点恢复: 已完成 {start_idx}/{len(img_ids)} 张")
+            print(f"Resuming from checkpoint: {start_idx}/{len(img_ids)} done")
 
-    # 加载模型
-    print(f"加载模型 {args.model_id}...")
+    # Load model
+    print(f"Loading model {args.model_id}...")
     t0 = time.time()
     model, processor = load_model(args.model_id, args.quantize_4bit)
-    print(f"模型加载完成 ({time.time() - t0:.1f}s)")
+    print(f"Model loaded ({time.time() - t0:.1f}s)")
 
-    # 逐张推理
+    # Per-image inference
     total_time = 0
     parse_failures = 0
 
-    for i in tqdm(range(len(img_ids)), desc="推理进度", initial=start_idx):
+    for i in tqdm(range(len(img_ids)), desc="Inference", initial=start_idx):
         img_id = img_ids[i]
 
-        # 跳过已完成的
+        # Skip already-processed images
         if img_id in raw_outputs:
             continue
 
         img_path = voc_root / "JPEGImages" / f"{img_id}.jpg"
         if not img_path.exists():
-            print(f"警告: 图片不存在 {img_path}, 跳过")
+            print(f"WARNING: Image not found {img_path}, skipping")
             raw_outputs[img_id] = ""
             continue
 
@@ -218,31 +220,31 @@ def main():
         try:
             raw_text = run_inference(model, processor, image)
         except Exception as e:
-            print(f"推理失败 {img_id}: {e}")
+            print(f"Inference failed {img_id}: {e}")
             raw_text = ""
         elapsed = time.time() - t0
         total_time += elapsed
 
         raw_outputs[img_id] = raw_text
 
-        # 每 50 张保存一次断点
+        # Save checkpoint every 50 images
         if (i + 1) % 50 == 0:
             save_checkpoint(ckpt_path, {"raw_outputs": raw_outputs})
             avg_time = total_time / (i - start_idx + 1)
             remaining = avg_time * (len(img_ids) - i - 1)
             print(
-                f"\n[{i + 1}/{len(img_ids)}] 平均 {avg_time:.2f}s/张, "
-                f"预计剩余 {remaining / 60:.1f} 分钟"
+                f"\n[{i + 1}/{len(img_ids)}] avg {avg_time:.2f}s/img, "
+                f"ETA {remaining / 60:.1f} min"
             )
 
-    # 保存所有原始输出
+    # Save all raw outputs
     save_checkpoint(ckpt_path, {"raw_outputs": raw_outputs})
     with open(raw_outputs_path, "w") as f:
         json.dump(raw_outputs, f, ensure_ascii=False, indent=2)
-    print(f"原始输出已保存至 {raw_outputs_path}")
+    print(f"Raw outputs saved to {raw_outputs_path}")
 
-    # ============ 解析 + 计算 mAP ============
-    print("\n解析检测结果...")
+    # ============ Parse detections + compute mAP ============
+    print("\nParsing detections...")
     all_detections = []
     for img_id in img_ids:
         img_path = voc_root / "JPEGImages" / f"{img_id}.jpg"
@@ -261,38 +263,38 @@ def main():
         all_detections.append(detections_to_voc_format(detections))
 
     print(
-        f"解析失败率: {parse_failures}/{len(img_ids)} "
+        f"Parse failure rate: {parse_failures}/{len(img_ids)} "
         f"({parse_failures / len(img_ids) * 100:.1f}%)"
     )
 
-    # 加载 GT
-    print("加载 Ground Truth...")
+    # Load ground truth
+    print("Loading ground truth...")
     all_gts = load_voc_ground_truths(voc_root, img_ids)
 
-    # 计算 mAP
-    print("计算 mAP...")
+    # Compute mAP
+    print("Computing mAP...")
     result = voc_eval(all_detections, all_gts)
 
-    # 输出结果
+    # Print results
     print(f"\n{'=' * 50}")
-    print(f"Gemma-4 E2B-it 零样本检测 VOC 2007 test")
+    print(f"Gemma-4 E2B-it Zero-Shot Detection - VOC 2007 test")
     print(f"{'=' * 50}")
     print(f"mAP @ IoU=0.5: {result['mAP'] * 100:.2f}%")
-    print(f"\n{'类别':<15} {'AP (%)':<10}")
+    print(f"\n{'Class':<15} {'AP (%)':<10}")
     print("-" * 25)
     for cls_name, ap in result["ap_per_class"]:
         print(f"{cls_name:<15} {ap * 100:.2f}")
     print("-" * 25)
     print(f"{'mAP':<15} {result['mAP'] * 100:.2f}")
 
-    # 统计信息
+    # Summary statistics
     total_dets = sum(len(d["labels"]) for d in all_detections)
     total_gts = sum(len(g["labels"]) for g in all_gts)
-    print(f"\n总检测数: {total_dets}, 总GT数: {total_gts}")
-    print(f"平均每张检测数: {total_dets / len(img_ids):.1f}")
-    print(f"总推理时间: {total_time / 60:.1f} 分钟")
+    print(f"\nTotal detections: {total_dets}, Total GTs: {total_gts}")
+    print(f"Avg detections per image: {total_dets / len(img_ids):.1f}")
+    print(f"Total inference time: {total_time / 60:.1f} min")
 
-    # 保存结果
+    # Save results
     result_path = str(output_dir / "eval_result.json")
     with open(result_path, "w") as f:
         json.dump(
@@ -309,7 +311,7 @@ def main():
             ensure_ascii=False,
             indent=2,
         )
-    print(f"\n结果已保存至 {result_path}")
+    print(f"\nResults saved to {result_path}")
 
 
 if __name__ == "__main__":

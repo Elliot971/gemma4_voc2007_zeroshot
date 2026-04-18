@@ -1,17 +1,18 @@
 """
-compare_vis.py - PLN vs Gemma-4 检测结果对比可视化
+compare_vis.py - Side-by-side visualization of PLN vs Gemma-4 detections.
 
-输入同一张图片，左边显示 PLN 的检测框（红色），右边显示 Gemma-4 的检测框（蓝色），
-同时叠加 GT（绿色虚线），便于 Case Study 分析。
+For the same image, draws PLN boxes (red) on the left and Gemma-4 boxes
+(blue) on the right, with ground truth overlaid (green dashed) on both
+panels. Useful for qualitative case-study analysis.
 
-用法:
-  # 对比单张图
+Usage:
+  # Compare specific images
   python compare_vis.py --img-id 000001
 
-  # 对比多张指定图
+  # Compare multiple images
   python compare_vis.py --img-id 000001 000004 000006
 
-  # 自动选出 PLN 失败但 Gemma 成功的 case (需先跑完两边的评测)
+  # Auto-select interesting cases (requires eval_voc.py results)
   python compare_vis.py --auto-select --num 10
 """
 
@@ -24,7 +25,7 @@ from pathlib import Path
 import numpy as np
 from PIL import Image, ImageDraw, ImageFont
 
-# 将项目根目录加入 sys.path
+# Add project root to sys.path
 _PROJECT_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(_PROJECT_ROOT))
 sys.path.insert(0, str(_PROJECT_ROOT / "scripts"))
@@ -33,7 +34,7 @@ from test_single import VOC_CLASSES, match_voc_class, parse_detections
 
 
 def load_gt_for_image(voc_root: Path, img_id: str):
-    """从 VOC XML 读取单张图的 GT"""
+    """Load ground truth boxes and labels from a VOC XML annotation."""
     ann_path = voc_root / "Annotations" / f"{img_id}.xml"
     boxes, labels = [], []
     if ann_path.exists():
@@ -57,11 +58,11 @@ def load_gt_for_image(voc_root: Path, img_id: str):
 
 
 def draw_boxes(draw, boxes, labels, color, width=3, dash=False):
-    """在图上画检测框"""
+    """Draw detection boxes on an image (supports dashed outlines for GT)."""
     for box, label in zip(boxes, labels):
         x1, y1, x2, y2 = box
         if dash:
-            # 绘制虚线矩形（简单模拟）
+            # Approximate dashed rectangle
             step = 10
             for start in range(int(x1), int(x2), step * 2):
                 end = min(start + step, int(x2))
@@ -83,28 +84,28 @@ def create_comparison(
     pln_dets: dict = None,
     output_dir: Path = None,
 ):
-    """生成单张图的对比可视化"""
+    """Generate a side-by-side comparison image for a single sample."""
     img_path = voc_root / "JPEGImages" / f"{img_id}.jpg"
     if not img_path.exists():
-        print(f"图片不存在: {img_path}")
+        print(f"Image not found: {img_path}")
         return
 
     image = Image.open(img_path).convert("RGB")
     img_w, img_h = image.size
 
-    # GT (绿色虚线)
+    # GT (green dashed)
     gt_boxes, gt_labels = load_gt_for_image(voc_root, img_id)
 
-    # Gemma 检测 (蓝色)
+    # Gemma detections (blue)
     gemma_dets = parse_detections(gemma_raw, img_w, img_h)
     gemma_boxes = [d["bbox"] for d in gemma_dets]
     gemma_labels = [d["label"] for d in gemma_dets]
 
-    # 创建并排对比图 (左: PLN 红色, 右: Gemma 蓝色)
-    canvas_w = img_w * 2 + 20  # 20px 间隔
+    # Create side-by-side canvas (left: PLN red, right: Gemma blue)
+    canvas_w = img_w * 2 + 20  # 20px gap
     canvas = Image.new("RGB", (canvas_w, img_h + 40), "white")
 
-    # 左图: PLN
+    # Left panel: PLN
     left = image.copy()
     draw_left = ImageDraw.Draw(left)
     draw_boxes(draw_left, gt_boxes, gt_labels, "green", width=2, dash=True)
@@ -114,61 +115,67 @@ def create_comparison(
         draw_boxes(draw_left, pln_boxes, pln_labels, "red", width=3)
     canvas.paste(left, (0, 30))
 
-    # 右图: Gemma
+    # Right panel: Gemma
     right = image.copy()
     draw_right = ImageDraw.Draw(right)
     draw_boxes(draw_right, gt_boxes, gt_labels, "green", width=2, dash=True)
     draw_boxes(draw_right, gemma_boxes, gemma_labels, "blue", width=3)
     canvas.paste(right, (img_w + 20, 30))
 
-    # 标题
+    # Panel titles
     draw_canvas = ImageDraw.Draw(canvas)
     draw_canvas.text((img_w // 2 - 30, 5), "PLN (Red)", fill="red")
     draw_canvas.text((img_w + 20 + img_w // 2 - 40, 5), "Gemma-4 (Blue)", fill="blue")
 
-    # 保存
+    # Save
     if output_dir is None:
         output_dir = Path(__file__).parent / "compare_results"
     output_dir.mkdir(parents=True, exist_ok=True)
     save_path = output_dir / f"compare_{img_id}.jpg"
     canvas.save(str(save_path))
-    print(f"[{img_id}] GT={len(gt_boxes)}, Gemma={len(gemma_dets)}, 保存至 {save_path}")
+    print(
+        f"[{img_id}] GT={len(gt_boxes)}, Gemma={len(gemma_dets)}, saved to {save_path}"
+    )
 
 
 def find_voc_root():
-    """自动查找 VOC 数据集路径"""
+    """Auto-detect VOC dataset root."""
     from test_single import find_voc_root as _find
 
     return _find()
 
 
 def main():
-    parser = argparse.ArgumentParser(description="PLN vs Gemma-4 对比可视化")
+    parser = argparse.ArgumentParser(
+        description="PLN vs Gemma-4 side-by-side detection comparison"
+    )
     parser.add_argument(
-        "--img-id", nargs="+", type=str, default=None, help="指定图片 ID"
+        "--img-id", nargs="+", type=str, default=None, help="Image ID(s) to compare"
     )
     parser.add_argument("--voc-root", type=str, default=None)
     parser.add_argument(
         "--gemma-raw-outputs",
         type=str,
         default="eval_results/raw_outputs.json",
-        help="Gemma 原始输出 JSON 文件",
+        help="Gemma raw output JSON from eval_voc.py",
     )
     parser.add_argument("--output-dir", type=str, default="compare_results")
     parser.add_argument(
-        "--auto-select", action="store_true", help="自动选出有代表性的 case"
+        "--auto-select", action="store_true", help="Auto-select interesting cases"
     )
-    parser.add_argument("--num", type=int, default=10, help="自动选择的图片数量")
+    parser.add_argument(
+        "--num", type=int, default=10, help="Number of auto-selected images"
+    )
     args = parser.parse_args()
 
     voc_root = Path(args.voc_root) if args.voc_root else find_voc_root()
     output_dir = Path(args.output_dir)
 
-    # 加载 Gemma 原始输出
+    # Load Gemma raw outputs
     raw_path = Path(args.gemma_raw_outputs)
     if not raw_path.exists():
-        print(f"Gemma 原始输出文件不存在: {raw_path}")
-        print("请先运行 eval_voc.py 生成评测结果")
+        print(f"Gemma raw output file not found: {raw_path}")
+        print("Run eval_voc.py first to generate evaluation results.")
         sys.exit(1)
 
     with open(raw_path) as f:
@@ -177,7 +184,7 @@ def main():
     if args.img_id:
         img_ids = args.img_id
     elif args.auto_select:
-        # 选出检测数量差异大的图片（可能是有趣的 case）
+        # Select images with large detection-count discrepancies (interesting cases)
         scored = []
         for img_id, raw_text in raw_outputs.items():
             img_path = voc_root / "JPEGImages" / f"{img_id}.jpg"
@@ -189,19 +196,18 @@ def main():
             gt_boxes, _ = load_gt_for_image(voc_root, img_id)
             scored.append((img_id, len(dets), len(gt_boxes)))
 
-        # 选检测数和 GT 数差异大的 + 一些检测准确的
         scored.sort(key=lambda x: abs(x[1] - x[2]), reverse=True)
         img_ids = [s[0] for s in scored[: args.num]]
-        print(f"自动选出 {len(img_ids)} 张有代表性的图片")
+        print(f"Auto-selected {len(img_ids)} representative images")
     else:
-        # 默认取前 10 张
+        # Default: first 10 images
         img_ids = list(raw_outputs.keys())[:10]
 
     for img_id in img_ids:
         raw_text = raw_outputs.get(img_id, "")
         create_comparison(voc_root, img_id, raw_text, output_dir=output_dir)
 
-    print(f"\n共生成 {len(img_ids)} 张对比图, 保存在 {output_dir}/")
+    print(f"\nGenerated {len(img_ids)} comparison images in {output_dir}/")
 
 
 if __name__ == "__main__":
