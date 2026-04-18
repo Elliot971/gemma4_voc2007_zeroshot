@@ -9,7 +9,7 @@ import re
 import sys
 from pathlib import Path
 from PIL import Image, ImageDraw, ImageFont
-from transformers import AutoModelForMultimodalLM, AutoProcessor
+from transformers import AutoModelForImageTextToText, AutoProcessor
 
 # ============ VOC 20 类 ============
 VOC_CLASSES = [
@@ -272,14 +272,14 @@ def main():
             load_in_4bit=True,
             bnb_4bit_compute_dtype=torch.bfloat16,
         )
-        model = AutoModelForMultimodalLM.from_pretrained(
+        model = AutoModelForImageTextToText.from_pretrained(
             model_id,
             quantization_config=bnb_config,
             device_map="auto",
         )
     except ImportError:
         print("bitsandbytes 未安装, 尝试 FP16 加载...")
-        model = AutoModelForMultimodalLM.from_pretrained(
+        model = AutoModelForImageTextToText.from_pretrained(
             model_id,
             torch_dtype=torch.float16,
             device_map="auto",
