@@ -6,12 +6,14 @@ Core design:
   2. Parse model output into VOC-format detections
   3. Reuse voc_eval.py from the PLN project (same evaluation ruler)
   4. Checkpoint support to resume after interruption
-  5. Save per-image raw outputs for prompt quality analysis
+  5. Save per-image raw outputs and timing for analysis
+  6. Use token log-prob as confidence score (not fixed 1.0)
+  7. Track failure types: empty_output / parse_failure / no_detection
 
 Usage:
   # AutoDL 4090 (recommended)
   export HF_ENDPOINT=https://hf-mirror.com
-  python eval_voc.py --voc-root /root/autodl-tmp/PLN-ResNet18/data/VOCdevkit/VOC2007
+  python eval_voc.py --voc-root /root/autodl-tmp/VOCdevkit/VOC2007
 
   # Local 4060 (4-bit quantized, debug only)
   python eval_voc.py --quantize-4bit --max-images 10
@@ -38,6 +40,7 @@ sys.path.insert(0, str(_PROJECT_ROOT / "scripts"))
 from test_single import (
     DETECTION_PROMPT,
     VOC_CLASSES,
+    classify_output,
     load_model,
     match_voc_class,
     parse_detections,
@@ -183,11 +186,15 @@ def main():
 
     # Resume from checkpoint
     raw_outputs = {}  # img_id -> raw_text
+    confidence_map = {}  # img_id -> confidence score
+    timing_map = {}  # img_id -> inference time (seconds)
     start_idx = 0
     if args.resume:
         ckpt = load_checkpoint(ckpt_path)
         if ckpt:
             raw_outputs = ckpt.get("raw_outputs", {})
+            confidence_map = ckpt.get("confidence_map", {})
+            timing_map = ckpt.get("timing_map", {})
             start_idx = len(raw_outputs)
             print(f"Resuming from checkpoint: {start_idx}/{len(img_ids)} done")
 
@@ -199,7 +206,7 @@ def main():
 
     # Per-image inference
     total_time = 0
-    parse_failures = 0
+    inferred_count = 0
 
     for i in tqdm(range(len(img_ids)), desc="Inference", initial=start_idx):
         img_id = img_ids[i]
@@ -212,25 +219,38 @@ def main():
         if not img_path.exists():
             print(f"WARNING: Image not found {img_path}, skipping")
             raw_outputs[img_id] = ""
+            confidence_map[img_id] = 0.0
+            timing_map[img_id] = 0.0
             continue
 
         image = Image.open(img_path).convert("RGB")
 
         t0 = time.time()
         try:
-            raw_text = run_inference(model, processor, image)
+            raw_text, confidence = run_inference(model, processor, image)
         except Exception as e:
             print(f"Inference failed {img_id}: {e}")
             raw_text = ""
+            confidence = 0.0
         elapsed = time.time() - t0
         total_time += elapsed
+        inferred_count += 1
 
         raw_outputs[img_id] = raw_text
+        confidence_map[img_id] = confidence
+        timing_map[img_id] = round(elapsed, 2)
 
         # Save checkpoint every 50 images
         if (i + 1) % 50 == 0:
-            save_checkpoint(ckpt_path, {"raw_outputs": raw_outputs})
-            avg_time = total_time / (i - start_idx + 1)
+            save_checkpoint(
+                ckpt_path,
+                {
+                    "raw_outputs": raw_outputs,
+                    "confidence_map": confidence_map,
+                    "timing_map": timing_map,
+                },
+            )
+            avg_time = total_time / inferred_count
             remaining = avg_time * (len(img_ids) - i - 1)
             print(
                 f"\n[{i + 1}/{len(img_ids)}] avg {avg_time:.2f}s/img, "
@@ -238,14 +258,29 @@ def main():
             )
 
     # Save all raw outputs
-    save_checkpoint(ckpt_path, {"raw_outputs": raw_outputs})
+    save_checkpoint(
+        ckpt_path,
+        {
+            "raw_outputs": raw_outputs,
+            "confidence_map": confidence_map,
+            "timing_map": timing_map,
+        },
+    )
     with open(raw_outputs_path, "w") as f:
         json.dump(raw_outputs, f, ensure_ascii=False, indent=2)
     print(f"Raw outputs saved to {raw_outputs_path}")
 
+    # Save timing data
+    timing_path = str(output_dir / "timing.json")
+    with open(timing_path, "w") as f:
+        json.dump(timing_map, f, indent=2)
+    print(f"Per-image timing saved to {timing_path}")
+
     # ============ Parse detections + compute mAP ============
     print("\nParsing detections...")
     all_detections = []
+    status_counts = defaultdict(int)
+
     for img_id in img_ids:
         img_path = voc_root / "JPEGImages" / f"{img_id}.jpg"
         if img_path.exists():
@@ -256,19 +291,24 @@ def main():
             img_w, img_h = 500, 375  # fallback
 
         raw_text = raw_outputs.get(img_id, "")
-        detections = parse_detections(raw_text, img_w, img_h)
-        if not detections and raw_text:
-            parse_failures += 1
+        score = confidence_map.get(img_id, 1.0)
+        detections = parse_detections(raw_text, img_w, img_h, score=score)
+
+        # Classify outcome
+        status = classify_output(raw_text, detections)
+        status_counts[status] += 1
 
         all_detections.append(detections_to_voc_format(detections))
 
-    print(
-        f"Parse failure rate: {parse_failures}/{len(img_ids)} "
-        f"({parse_failures / len(img_ids) * 100:.1f}%)"
-    )
+    # Print failure analysis
+    print(f"\n--- Output Classification ---")
+    for status_type in ["success", "no_detection", "parse_failure", "empty_output"]:
+        count = status_counts.get(status_type, 0)
+        pct = count / len(img_ids) * 100
+        print(f"  {status_type:<16} {count:>5} ({pct:.1f}%)")
 
     # Load ground truth
-    print("Loading ground truth...")
+    print("\nLoading ground truth...")
     all_gts = load_voc_ground_truths(voc_root, img_ids)
 
     # Compute mAP
@@ -290,8 +330,12 @@ def main():
     # Summary statistics
     total_dets = sum(len(d["labels"]) for d in all_detections)
     total_gts = sum(len(g["labels"]) for g in all_gts)
+    timing_values = [v for v in timing_map.values() if v > 0]
+    avg_time_per_img = np.mean(timing_values) if timing_values else 0
+
     print(f"\nTotal detections: {total_dets}, Total GTs: {total_gts}")
     print(f"Avg detections per image: {total_dets / len(img_ids):.1f}")
+    print(f"Avg inference time: {avg_time_per_img:.2f}s/img")
     print(f"Total inference time: {total_time / 60:.1f} min")
 
     # Save results
@@ -304,8 +348,9 @@ def main():
                 "total_images": len(img_ids),
                 "total_detections": total_dets,
                 "total_ground_truths": total_gts,
-                "parse_failures": parse_failures,
-                "total_time_sec": total_time,
+                "status_counts": dict(status_counts),
+                "avg_inference_time_sec": round(avg_time_per_img, 2),
+                "total_time_sec": round(total_time, 1),
             },
             f,
             ensure_ascii=False,
