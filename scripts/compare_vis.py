@@ -24,6 +24,11 @@ from pathlib import Path
 import numpy as np
 from PIL import Image, ImageDraw, ImageFont
 
+# 将项目根目录加入 sys.path
+_PROJECT_ROOT = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(_PROJECT_ROOT))
+sys.path.insert(0, str(_PROJECT_ROOT / "scripts"))
+
 from test_single import VOC_CLASSES, match_voc_class, parse_detections
 
 

@@ -1,0 +1,14 @@
+# 评测输出
+eval_results/
+compare_results/
+
+# 可视化结果
+test_result_*.jpg
+
+# Python
+__pycache__/
+*.pyc
+
+# HuggingFace 缓存
+*.bin
+*.safetensors

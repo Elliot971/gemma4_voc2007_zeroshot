@@ -268,8 +268,8 @@ def run_inference(model, processor, image: Image.Image):
 def find_voc_root():
     """自动查找 VOC 数据集路径（兼容本地和 AutoDL）"""
     candidates = [
-        # 本地 (相对路径)
-        Path(__file__).parent.parent
+        # 本地 (相对路径: scripts/ -> gemma4-voc-zeroshot/ -> wxg_tasks2/)
+        Path(__file__).parent.parent.parent
         / "PLN-ResNet18"
         / "data"
         / "VOCdevkit"

@@ -30,7 +30,11 @@ import torch
 from PIL import Image
 from tqdm import tqdm
 
-# 复用 test_single.py 中的解析逻辑
+# 将项目根目录加入 sys.path
+_PROJECT_ROOT = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(_PROJECT_ROOT))
+sys.path.insert(0, str(_PROJECT_ROOT / "scripts"))
+
 from test_single import (
     DETECTION_PROMPT,
     VOC_CLASSES,
@@ -39,20 +43,7 @@ from test_single import (
     parse_detections,
     run_inference,
 )
-
-# ---------- 复用 PLN 的 voc_eval ----------
-# 优先从 PLN 项目引用, 否则使用本地拷贝
-_PLN_UTILS_PATHS = [
-    Path(__file__).parent.parent / "PLN-ResNet18" / "utils",
-    Path("/root/autodl-tmp/PLN-ResNet18/utils"),
-    Path(__file__).parent / "utils",
-]
-for _p in _PLN_UTILS_PATHS:
-    if (_p / "voc_eval.py").exists():
-        sys.path.insert(0, str(_p.parent))
-        break
-
-from utils.voc_eval import voc_eval, VOC_CLASSES as VOC_EVAL_CLASSES
+from utils.voc_eval import voc_eval
 
 
 def load_voc_ground_truths(voc_root: Path, img_ids: list):
