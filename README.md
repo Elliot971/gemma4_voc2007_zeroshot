@@ -40,7 +40,7 @@ pip install transformers accelerate bitsandbytes pillow tqdm numpy
 
 ### 模型下载
 
-Gemma-4 E2B-it 权重约 10GB，由 HuggingFace transformers 自动下载管理,使用镜像：
+Gemma-4 E2B-it 权重约 10GB，由 HuggingFace transformers 自动下载管理。国内环境建议使用镜像：
 
 ```bash
 export HF_ENDPOINT=https://hf-mirror.com
@@ -50,17 +50,16 @@ export HF_ENDPOINT=https://hf-mirror.com
 
 ### 数据准备
 
-VOC 2007 数据集不包含在仓库中。需自行准备，或通过符号链接指向已有数据：
+VOC 2007 数据集不包含在仓库中。通过 `--voc-root` 参数指定路径即可：
 
 ```bash
-# 方式一：符号链接到 PLN 项目已有数据
-ln -s /path/to/PLN-ResNet18/data/VOCdevkit data/VOCdevkit
-
-# 方式二：AutoDL 上的路径
-# 脚本会自动搜索 /root/autodl-tmp/PLN-ResNet18/data/VOCdevkit/VOC2007
+# 下载 VOC 2007 test 集（约 1.5GB）
+cd /root/autodl-tmp
+wget http://host.robots.ox.ac.uk/pascal/VOC/voc2007/VOCtest_06-Nov-2007.tar
+tar -xf VOCtest_06-Nov-2007.tar && rm VOCtest_06-Nov-2007.tar
 
 # 确保目录结构如下：
-# data/VOCdevkit/VOC2007/
+# /root/autodl-tmp/VOCdevkit/VOC2007/
 #   ├── JPEGImages/
 #   ├── Annotations/
 #   └── ImageSets/Main/test.txt
@@ -86,7 +85,7 @@ python scripts/test_single.py --quantize-4bit
 python scripts/test_single.py --image path/to/image.jpg
 ```
 
-输出包含模型原始文本、解析出的检测框列表，以及可视化图片（保存在 `visualize/`）。
+输出包含模型原始文本、解析出的检测框列表，以及可视化图片。
 
 ### 2. 全量 mAP 评测
 
@@ -136,12 +135,10 @@ gemma4-voc-zeroshot/
 ├── utils/
 │   ├── __init__.py
 │   └── voc_eval.py          # VOC mAP 计算（与 PLN 项目共用同一份）
-├── data/                    # VOC 数据集（通过符号链接引用，不纳入版本控制）
-├── configs/                 # 预留配置目录（模型权重由 HuggingFace 管理）
-├── visualize/               # 单张检测可视化输出
 ├── eval_results/            # 评测结果输出（gitignore）
 ├── compare_results/         # 对比可视化输出（gitignore）
-└── .gitignore
+├── .gitignore
+└── README.md
 ```
 
 ---

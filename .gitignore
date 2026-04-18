@@ -2,16 +2,6 @@
 eval_results/
 compare_results/
 
-# Visualization outputs (keep README only)
-visualize/*.jpg
-visualize/*.png
-
-# Test results
-test_result_*.jpg
-
-# Data (symlinked, not tracked)
-data/VOCdevkit
-
 # Python
 __pycache__/
 *.pyc
