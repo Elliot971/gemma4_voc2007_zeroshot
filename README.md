@@ -110,17 +110,20 @@ python scripts/eval_voc.py --quantize-4bit --max-images 10
 
 ### 3. 对比可视化
 
-生成 PLN vs Gemma-4 的并排对比图：
+生成 GT vs Gemma-4 的并排对比图（可选叠加 PLN 结果做跨范式对比）：
 
 ```bash
-# 指定图片
+# Gemma vs GT（不需要 PLN 结果）
 python scripts/compare_vis.py --img-id 000001 000004 000006
 
 # 自动选出有代表性的 case
 python scripts/compare_vis.py --auto-select --num 10
+
+# 叠加 PLN 结果做三方对比（需要 PLN 导出的检测 JSON）
+python scripts/compare_vis.py --pln-results pln_detections.json --auto-select
 ```
 
-输出保存在 `compare_results/`，左侧为 PLN 检测（红框），右侧为 Gemma 检测（蓝框），GT 用绿色虚线标注。
+输出保存在 `compare_results/`，左侧为 GT（或 PLN+GT），右侧为 Gemma 检测（蓝框）+ GT（绿色虚线）。
 
 ---
 
@@ -131,7 +134,7 @@ gemma4-voc-zeroshot/
 ├── scripts/
 │   ├── test_single.py       # 单张图验证：模型加载、prompt、解析、可视化
 │   ├── eval_voc.py          # 全量 mAP 评测：逐张推理 + 断点续传 + voc_eval
-│   └── compare_vis.py       # PLN vs Gemma 红蓝框对比可视化
+│   └── compare_vis.py       # GT vs Gemma (vs PLN) 对比可视化
 ├── utils/
 │   ├── __init__.py
 │   └── voc_eval.py          # VOC mAP 计算（与 PLN 项目共用同一份）
