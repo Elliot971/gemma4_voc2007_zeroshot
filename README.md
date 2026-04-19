@@ -6,7 +6,14 @@
 
 本项目与 [PLN-ResNet18](https://github.com/Elliot971/pln_resnet18_seg) 项目共用同一份 VOC 2007 数据和同一套 `voc_eval.py` 评测代码，确保两个范式（传统 CNN 检测 vs VLM 零样本检测）的结果可以直接对比。
 
-### 核心设计
+### 评测结果
+
+| 方法 | mAP@0.5 | 训练数据 | 推理速度 |
+|------|---------|---------|---------|
+| PLN-ResNet18 (有监督) | **68.74%** | VOC 07+12 trainval | ~30 ms/张 |
+| **Gemma-4 E2B (零样本)** | **51.51%** | 无 | 4370 ms/张 |
+
+详细分析见 `report.tex`。
 
 - **零样本推理**：不做任何微调，直接 prompt 检测 20 类 VOC 物体
 - **原生检测能力**：Gemma 4 支持 `box_2d` 输出格式，坐标空间为 1000x1000 归一化
@@ -138,8 +145,11 @@ gemma4-voc-zeroshot/
 ├── utils/
 │   ├── __init__.py
 │   └── voc_eval.py          # VOC mAP 计算（与 PLN 项目共用同一份）
-├── eval_results/            # 评测结果输出（gitignore）
-├── compare_results/         # 对比可视化输出（gitignore）
+├── figures/                 # 报告配图
+│   ├── compare_000001.jpg   # person+dog 对比
+│   ├── compare_000004.jpg   # 密集场景对比
+│   └── compare_000542.jpg   # cat 对比
+├── report.tex               # LaTeX 评测报告
 ├── .gitignore
 └── README.md
 ```
