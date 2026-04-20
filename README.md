@@ -6,13 +6,31 @@
 
 本项目与 [PLN-ResNet18](https://github.com/Elliot971/pln_resnet18_seg) 项目共用同一份 VOC 2007 数据和同一套 `voc_eval.py` 评测代码，确保两个范式（传统 CNN 检测 vs VLM 零样本检测）的结果可以直接对比。
 
-### 核心设计
+### 评测结果
+
+| 方法 | mAP@0.5 | mAP@0.75 | 训练数据 | 推理速度 |
+|------|---------|----------|----------|---------|
+| PLN-ResNet18 (有监督) | 68.74% | --- | VOC 07+12 trainval | ~30 ms/张 |
+| **Gemma-4 E2B (零样本)** | **51.51%** | **30.05%** | 无 | 4370 ms/张 |
+
+详细分析见 `report.tex`。
+
+### 零样本 mAP 损失分析（Gemma-4 E2B）
+
+- **召回率**: 70.3% (8,456 / 12,032 GT 被正确检测)
+- **漏检率**: 29.7% (person 类漏检最严重，1,278 个)
+- **误检率**: 22.9% (2,931 / 13,191 检测框为误检)
+  - 背景误检（幻觉）: 16.8%
+  - 定位误差（类别对但框不准）: 12.4%
+- **mAP@0.5 → mAP@0.75** 下降 41.7%，说明定位精度是 VLM 核心短板
 
 - **零样本推理**：不做任何微调，直接 prompt 检测 20 类 VOC 物体
 - **原生检测能力**：Gemma 4 支持 `box_2d` 输出格式，坐标空间为 1000x1000 归一化
 - **三级容错解析**：直接 JSON 解析 -> 正则提取数组 -> 逐个提取对象
 - **VOC 类别模糊匹配**：别名映射 + 子串匹配，处理 VLM 输出的同义词（如 airplane -> aeroplane）
 - **断点续传**：每 50 张保存 checkpoint，4952 张全量评测中断后可从断点恢复
+- **IoU 敏感性分析**：从 checkpoint 重新计算任意 IoU 阈值下的 mAP（无需重跑模型）
+- **错误模式分析**：将检测框分类为正确/定位误差/误检/漏检，定量分析 mAP 损失来源
 
 ---
 
@@ -125,6 +143,21 @@ python scripts/compare_vis.py --pln-results pln_detections.json --auto-select
 
 输出保存在 `compare_results/`，左侧为 GT（或 PLN+GT），右侧为 Gemma 检测（蓝框）+ GT（绿色虚线）。
 
+### 4. 错误模式分析（可选）
+
+从已有的 checkpoint.json 重新分析检测错误，无需重新运行模型：
+
+```bash
+# 需要 VOC 2007 test 数据集（Annotations）
+python scripts/analyze_errors.py
+```
+
+输出:
+- mAP@0.5, 0.6, 0.7, 0.75, 0.8, 0.9 的详细对比
+- 检测错误分类：正确 / 定位误差 / 背景误检 / 类别混淆 / 重复检测
+- GT 召回情况：检测到 vs 漏检
+- 保存到 `eval_results/analysis_result.json`
+
 ---
 
 ## 代码结构
@@ -138,8 +171,11 @@ gemma4-voc-zeroshot/
 ├── utils/
 │   ├── __init__.py
 │   └── voc_eval.py          # VOC mAP 计算（与 PLN 项目共用同一份）
-├── eval_results/            # 评测结果输出（gitignore）
-├── compare_results/         # 对比可视化输出（gitignore）
+├── figures/                 # 报告配图
+│   ├── compare_000001.jpg   # person+dog 对比
+│   ├── compare_000004.jpg   # 密集场景对比
+│   └── compare_000542.jpg   # cat 对比
+├── report.tex               # LaTeX 评测报告
 ├── .gitignore
 └── README.md
 ```

@@ -2,6 +2,10 @@
 eval_results/
 compare_results/
 
+# Dataset (downloaded locally, not tracked)
+VOCdevkit/
+VOCtest*.tar
+
 # Python
 __pycache__/
 *.pyc
@@ -15,3 +19,11 @@ __pycache__/
 # OS
 .DS_Store
 Thumbs.db
+
+# LaTeX auxiliary files
+*.aux
+*.log
+*.out
+*.toc
+*.synctex.gz
+*.synctex(busy)
