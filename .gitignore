@@ -1,10 +1,16 @@
 # Evaluation outputs
 eval_results/
 compare_results/
+eval_results_finetuned/
+
+# Finetuning
+finetune_data/
+finetune_results/
 
 # Dataset (downloaded locally, not tracked)
 VOCdevkit/
 VOCtest*.tar
+VOCtrainval*.tar
 
 # Python
 __pycache__/

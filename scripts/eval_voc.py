@@ -157,6 +157,12 @@ def main():
         "--output-dir", type=str, default="eval_results", help="Output directory"
     )
     parser.add_argument("--resume", action="store_true", help="Resume from checkpoint")
+    parser.add_argument(
+        "--adapter",
+        type=str,
+        default=None,
+        help="Path to LoRA adapter directory (for fine-tuned model evaluation)",
+    )
     args = parser.parse_args()
 
     # Locate VOC dataset
@@ -202,6 +208,14 @@ def main():
     print(f"Loading model {args.model_id}...")
     t0 = time.time()
     model, processor = load_model(args.model_id, args.quantize_4bit)
+
+    # Load LoRA adapter if specified
+    if args.adapter:
+        from peft import PeftModel
+
+        print(f"Loading LoRA adapter from {args.adapter}...")
+        model = PeftModel.from_pretrained(model, args.adapter)
+
     print(f"Model loaded ({time.time() - t0:.1f}s)")
 
     # Per-image inference

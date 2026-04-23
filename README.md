@@ -158,6 +158,45 @@ python scripts/analyze_errors.py
 - GT 召回情况：检测到 vs 漏检
 - 保存到 `eval_results/analysis_result.json`
 
+### 5. 微调训练（阶段三）
+
+用 VOC trainval 微调 Gemma-4，测试微调后 mAP 是否提升。
+
+#### Step 1: 准备训练数据
+
+```bash
+# VOC 2007 trainval（约 5000 张）
+python scripts/prepare_finetune_data.py \
+  --voc-root /root/autodl-tmp/VOCdevkit/VOC2007 \
+  --split trainval --augment
+
+# 输出: finetune_data/sft_train_trainval_aug.jsonl（约 7000 条）
+```
+
+#### Step 2: 训练
+
+```bash
+# AutoDL 4090 (LoRA bf16，完整训练)
+export HF_ENDPOINT=https://hf-mirror.com
+python scripts/finetune_gemma.py \
+  --data finetune_data/sft_train_trainval_aug.jsonl \
+  --epochs 5 --batch-size 4 --gradient-accumulation 4 \
+  --lora-rank 64 --output-dir finetune_results/lora_voc
+
+# 本地 4060 (QLoRA 4-bit，仅验证 loss 下降)
+python scripts/finetune_gemma.py \
+  --data finetune_data/test_demo.jsonl \
+  --qlora --max-samples 20 --epochs 3 --batch-size 1
+```
+
+#### Step 3: 评测微调后模型
+
+```bash
+python scripts/eval_voc.py \
+  --adapter finetune_results/lora_voc/adapter \
+  --output-dir eval_results_finetuned
+```
+
 ---
 
 ## 代码结构
@@ -165,17 +204,20 @@ python scripts/analyze_errors.py
 ```text
 gemma4-voc-zeroshot/
 ├── scripts/
-│   ├── test_single.py       # 单张图验证：模型加载、prompt、解析、可视化
-│   ├── eval_voc.py          # 全量 mAP 评测：逐张推理 + 断点续传 + voc_eval
-│   └── compare_vis.py       # GT vs Gemma (vs PLN) 对比可视化
+│   ├── test_single.py          # 单张图验证：模型加载、prompt、解析、可视化
+│   ├── eval_voc.py             # 全量 mAP 评测：逐张推理 + 断点续传 + voc_eval
+│   ├── compare_vis.py          # GT vs Gemma (vs PLN) 对比可视化
+│   ├── analyze_errors.py       # IoU 阈值扫描 + 错误模式分析
+│   ├── prepare_finetune_data.py # VOC XML -> SFT 训练 JSONL
+│   └── finetune_gemma.py       # LoRA / QLoRA 微调训练
 ├── utils/
 │   ├── __init__.py
-│   └── voc_eval.py          # VOC mAP 计算（与 PLN 项目共用同一份）
-├── figures/                 # 报告配图
-│   ├── compare_000001.jpg   # person+dog 对比
-│   ├── compare_000004.jpg   # 密集场景对比
-│   └── compare_000542.jpg   # cat 对比
-├── report.tex               # LaTeX 评测报告
+│   └── voc_eval.py             # VOC mAP 计算（与 PLN 项目共用同一份）
+├── finetune_data/              # 训练数据（.gitignore 排除）
+├── finetune_results/           # 微调结果（.gitignore 排除）
+├── eval_results/               # 评测结果
+├── figures/                    # 报告配图
+├── report.tex                  # LaTeX 评测报告
 ├── .gitignore
 └── README.md
 ```
