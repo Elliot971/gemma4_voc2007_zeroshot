@@ -189,22 +189,35 @@ def _get_target_modules(model, vision_lora: bool):
     """Collect Linear module names for LoRA, excluding unsupported types."""
     import torch.nn as nn
 
-    target_modules = []
+    # Module types that are NOT nn.Linear but contain Linear children —
+    # PEFT cannot handle these, so we must skip every child inside them.
+    _WRAP_TYPES = {"Gemma4ClippableLinear"}
+
+    skip_prefixes = set()
+    target_set = set()
+
     for name, module in model.named_modules():
+        # Mark prefixes inside unsupported wrappers
+        if type(module).__name__ in _WRAP_TYPES:
+            skip_prefixes.add(name)
+
         if not isinstance(module, nn.Linear):
             continue
-        # Skip Gemma4ClippableLinear and other non-standard layers in vision encoder
-        if "Gemma4ClippableLinear" in type(module).__name__:
+
+        # Skip if this Linear is nested inside an unsupported wrapper
+        if any(name == sp or name.startswith(sp + ".") for sp in skip_prefixes):
             continue
-        # vision encoder layers (only if vision_lora is True)
-        if not vision_lora and (
-            "vision_tower" in name or "vision_model" in name or "vision_encoder" in name
+
+        # Skip vision encoder layers when vision_lora is False
+        if not vision_lora and any(
+            p in name for p in ("vision_tower", "vision_model", "vision_encoder")
         ):
             continue
+
         leaf = name.rsplit(".", 1)[-1]
-        if leaf not in target_modules:
-            target_modules.append(leaf)
-    return target_modules
+        target_set.add(leaf)
+
+    return sorted(target_set)
 
 
 def apply_lora(model, rank=64, alpha=64, vision_lora=True):
