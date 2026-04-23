@@ -185,8 +185,33 @@ def load_model(model_id, qlora=False):
     return model, processor
 
 
+def _get_target_modules(model, vision_lora: bool):
+    """Collect Linear module names for LoRA, excluding unsupported types."""
+    import torch.nn as nn
+
+    target_modules = []
+    for name, module in model.named_modules():
+        if not isinstance(module, nn.Linear):
+            continue
+        # Skip Gemma4ClippableLinear and other non-standard layers in vision encoder
+        if "Gemma4ClippableLinear" in type(module).__name__:
+            continue
+        # vision encoder layers (only if vision_lora is True)
+        if not vision_lora and (
+            "vision_tower" in name or "vision_model" in name or "vision_encoder" in name
+        ):
+            continue
+        leaf = name.rsplit(".", 1)[-1]
+        if leaf not in target_modules:
+            target_modules.append(leaf)
+    return target_modules
+
+
 def apply_lora(model, rank=64, alpha=64, vision_lora=True):
     """Apply LoRA adapters to the model.
+
+    Explicitly enumerates target modules to avoid unsupported layer types
+    (e.g. Gemma4ClippableLinear) in the vision encoder.
 
     Args:
         model: the loaded Gemma-4 model.
@@ -197,24 +222,8 @@ def apply_lora(model, rank=64, alpha=64, vision_lora=True):
     Returns:
         PEFT-wrapped model.
     """
-    target_modules = []
-
-    # LLM modules
-    llm_prefix = "language_model"
-    for name, module in model.named_modules():
-        for target in LLM_TARGET_MODULES:
-            if name.endswith(target) and llm_prefix in name:
-                target_modules.append(name)
-                break
-
-    # Vision encoder modules
-    if vision_lora:
-        vision_prefix = "vision_tower"
-        for name, module in model.named_modules():
-            for target in VISION_TARGET_MODULES:
-                if name.endswith(target) and vision_prefix in name:
-                    target_modules.append(name)
-                    break
+    target_modules = _get_target_modules(model, vision_lora)
+    print(f"LoRA target modules ({len(target_modules)}): {target_modules}")
 
     lora_config = LoraConfig(
         r=rank,
@@ -324,7 +333,7 @@ def main():
         logging_steps=args.logging_steps,
         save_strategy="steps",
         save_steps=args.save_steps,
-        save_total_limit=3,
+        save_total_limit=1,
         seed=args.seed,
         remove_unused_columns=False,
         dataloader_num_workers=args.dataloader_workers,
