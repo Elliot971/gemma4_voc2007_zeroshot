@@ -186,7 +186,12 @@ def load_model(model_id, qlora=False):
 
 
 def _get_target_modules(model, vision_lora: bool):
-    """Collect Linear module names for LoRA, excluding unsupported types."""
+    """Collect FULLY-QUALIFIED Linear module names for LoRA.
+
+    Returns full dotted paths (e.g. 'language_model.layers.0.self_attn.q_proj')
+    so PEFT only replaces exact modules, avoiding ambiguity with identically
+    named modules in the vision encoder.
+    """
     import torch.nn as nn
 
     # Module types that are NOT nn.Linear but contain Linear children —
@@ -194,7 +199,7 @@ def _get_target_modules(model, vision_lora: bool):
     _WRAP_TYPES = {"Gemma4ClippableLinear"}
 
     skip_prefixes = set()
-    target_set = set()
+    target_names = []
 
     for name, module in model.named_modules():
         # Mark prefixes inside unsupported wrappers
@@ -214,10 +219,9 @@ def _get_target_modules(model, vision_lora: bool):
         ):
             continue
 
-        leaf = name.rsplit(".", 1)[-1]
-        target_set.add(leaf)
+        target_names.append(name)
 
-    return sorted(target_set)
+    return sorted(target_names)
 
 
 def apply_lora(model, rank=64, alpha=64, vision_lora=True):
