@@ -195,6 +195,7 @@ def _patch_clippable_linear_eval(model):
             clamp_buffers=clamp_bufs,
         )
         new_mod.weight.data.copy_(linear.weight.data)
+        new_mod = new_mod.to(device=linear.weight.device, dtype=linear.weight.dtype)
         setattr(parent, attr, new_mod)
         replaced += 1
 
@@ -279,8 +280,8 @@ def main():
         _patch_clippable_linear_eval(model)
         print(f"Loading LoRA adapter from {args.adapter}...")
         model = PeftModel.from_pretrained(model, args.adapter)
-        model = model.to("cuda")
-        print("Model moved to cuda after loading LoRA adapter.")
+        model = model.to("cuda").to(torch.bfloat16)
+        print("Model moved to cuda (bf16) after loading LoRA adapter.")
 
     print(f"Model loaded ({time.time() - t0:.1f}s)")
 

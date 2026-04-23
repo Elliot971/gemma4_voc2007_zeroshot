@@ -248,6 +248,7 @@ def _patch_clippable_linear(model):
             clamp_buffers=clamp_bufs,
         )
         new_mod.weight.data.copy_(linear.weight.data)
+        new_mod = new_mod.to(device=linear.weight.device, dtype=linear.weight.dtype)
         setattr(parent, attr, new_mod)
         replaced += 1
 
