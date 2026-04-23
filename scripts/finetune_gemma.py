@@ -185,6 +185,62 @@ def load_model(model_id, qlora=False):
     return model, processor
 
 
+def _patch_clippable_linear(model):
+    """Replace Gemma4ClippableLinear with nn.Linear-compatible modules.
+
+    Gemma4ClippableLinear wraps nn.Linear inside a non-standard module type
+    that PEFT cannot handle.  We replace each instance with a lightweight
+    subclass of nn.Linear that preserves the original weights *and* the
+    clipping behaviour, so PEFT can seamlessly attach LoRA adapters.
+    """
+    import torch.nn as nn
+
+    try:
+        from transformers.models.gemma4.modeling_gemma4 import Gemma4ClippableLinear
+    except ImportError:
+        print("[patch] Gemma4ClippableLinear not found — skip patching")
+        return
+
+    class PatchedClippableLinear(nn.Linear):
+        """Drop-in replacement: nn.Linear + coordinate clipping."""
+
+        def __init__(self, in_features, out_features, bias, clip_fn):
+            super().__init__(in_features, out_features, bias=bias is not None)
+            if bias is not None:
+                self.bias.data.copy_(bias)
+            self.clip_fn = clip_fn
+
+        def forward(self, x):
+            return self.clip_fn(super().forward(x))
+
+    replaced = 0
+    for name, module in list(model.named_modules()):
+        if not isinstance(module, Gemma4ClippableLinear):
+            continue
+        parent_path = name.rsplit(".", 1)
+        if len(parent_path) == 2:
+            parent = dict(model.named_modules())[parent_path[0]]
+            attr = parent_path[1]
+        else:
+            parent = model
+            attr = name
+        linear = module.linear
+        bias = linear.bias.data.clone() if linear.bias is not None else None
+        new_mod = PatchedClippableLinear(
+            linear.in_features,
+            linear.out_features,
+            bias=bias,
+            clip_fn=module.clip_fn,
+        )
+        new_mod.weight.data.copy_(linear.weight.data)
+        setattr(parent, attr, new_mod)
+        replaced += 1
+
+    print(
+        f"[patch] Replaced {replaced} Gemma4ClippableLinear → PatchedClippableLinear(nn.Linear)"
+    )
+
+
 def _get_target_modules(model, vision_lora: bool):
     """Collect FULLY-QUALIFIED Linear module names for LoRA.
 
@@ -239,6 +295,9 @@ def apply_lora(model, rank=64, alpha=64, vision_lora=True):
     Returns:
         PEFT-wrapped model.
     """
+    # Patch Gemma4ClippableLinear → nn.Linear subclass so PEFT can handle it
+    _patch_clippable_linear(model)
+
     target_modules = _get_target_modules(model, vision_lora)
     print(f"LoRA target modules ({len(target_modules)}): {target_modules}")
 
