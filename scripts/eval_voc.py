@@ -141,6 +141,68 @@ def load_checkpoint(ckpt_path: str):
     return None
 
 
+def _patch_clippable_linear_eval(model):
+    """Replace Gemma4ClippableLinear with nn.Linear-compatible modules for PEFT."""
+    import torch.nn as nn
+
+    try:
+        from transformers.models.gemma4.modeling_gemma4 import Gemma4ClippableLinear
+    except ImportError:
+        return
+
+    class PatchedClippableLinear(nn.Linear):
+        def __init__(self, in_features, out_features, use_clipped, clamp_buffers):
+            super().__init__(in_features, out_features, bias=False)
+            self.use_clipped = use_clipped
+            if use_clipped:
+                self.register_buffer("input_min", clamp_buffers["input_min"])
+                self.register_buffer("input_max", clamp_buffers["input_max"])
+                self.register_buffer("output_min", clamp_buffers["output_min"])
+                self.register_buffer("output_max", clamp_buffers["output_max"])
+
+        def forward(self, x):
+            if self.use_clipped:
+                x = torch.clamp(x, self.input_min, self.input_max)
+            x = super().forward(x)
+            if self.use_clipped:
+                x = torch.clamp(x, self.output_min, self.output_max)
+            return x
+
+    replaced = 0
+    for name, module in list(model.named_modules()):
+        if not isinstance(module, Gemma4ClippableLinear):
+            continue
+        parent_path = name.rsplit(".", 1)
+        if len(parent_path) == 2:
+            parent = dict(model.named_modules())[parent_path[0]]
+            attr = parent_path[1]
+        else:
+            parent = model
+            attr = name
+        linear = module.linear
+        clamp_bufs = None
+        if module.use_clipped_linears:
+            clamp_bufs = {
+                "input_min": module.input_min.data.clone(),
+                "input_max": module.input_max.data.clone(),
+                "output_min": module.output_min.data.clone(),
+                "output_max": module.output_max.data.clone(),
+            }
+        new_mod = PatchedClippableLinear(
+            linear.in_features,
+            linear.out_features,
+            use_clipped=module.use_clipped_linears,
+            clamp_buffers=clamp_bufs,
+        )
+        new_mod.weight.data.copy_(linear.weight.data)
+        setattr(parent, attr, new_mod)
+        replaced += 1
+
+    print(
+        f"[patch] Replaced {replaced} Gemma4ClippableLinear → PatchedClippableLinear(nn.Linear)"
+    )
+
+
 def main():
     parser = argparse.ArgumentParser(
         description="Gemma-4 E2B zero-shot mAP evaluation on VOC 2007 test"
@@ -213,6 +275,8 @@ def main():
     if args.adapter:
         from peft import PeftModel
 
+        print("Patching Gemma4ClippableLinear for PEFT compatibility...")
+        _patch_clippable_linear_eval(model)
         print(f"Loading LoRA adapter from {args.adapter}...")
         model = PeftModel.from_pretrained(model, args.adapter)
 
