@@ -279,6 +279,8 @@ def main():
         _patch_clippable_linear_eval(model)
         print(f"Loading LoRA adapter from {args.adapter}...")
         model = PeftModel.from_pretrained(model, args.adapter)
+        model = model.to("cuda")
+        print("Model moved to cuda after loading LoRA adapter.")
 
     print(f"Model loaded ({time.time() - t0:.1f}s)")
 
