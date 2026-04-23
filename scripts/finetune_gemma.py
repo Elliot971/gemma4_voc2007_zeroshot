@@ -202,16 +202,24 @@ def _patch_clippable_linear(model):
         return
 
     class PatchedClippableLinear(nn.Linear):
-        """Drop-in replacement: nn.Linear + coordinate clipping."""
+        """Drop-in replacement: nn.Linear + input/output coordinate clipping."""
 
-        def __init__(self, in_features, out_features, bias, clip_fn):
-            super().__init__(in_features, out_features, bias=bias is not None)
-            if bias is not None:
-                self.bias.data.copy_(bias)
-            self.clip_fn = clip_fn
+        def __init__(self, in_features, out_features, use_clipped, clamp_buffers):
+            super().__init__(in_features, out_features, bias=False)
+            self.use_clipped = use_clipped
+            if use_clipped:
+                self.register_buffer("input_min", clamp_buffers["input_min"])
+                self.register_buffer("input_max", clamp_buffers["input_max"])
+                self.register_buffer("output_min", clamp_buffers["output_min"])
+                self.register_buffer("output_max", clamp_buffers["output_max"])
 
         def forward(self, x):
-            return self.clip_fn(super().forward(x))
+            if self.use_clipped:
+                x = torch.clamp(x, self.input_min, self.input_max)
+            x = super().forward(x)
+            if self.use_clipped:
+                x = torch.clamp(x, self.output_min, self.output_max)
+            return x
 
     replaced = 0
     for name, module in list(model.named_modules()):
@@ -225,12 +233,19 @@ def _patch_clippable_linear(model):
             parent = model
             attr = name
         linear = module.linear
-        bias = linear.bias.data.clone() if linear.bias is not None else None
+        clamp_bufs = None
+        if module.use_clipped_linears:
+            clamp_bufs = {
+                "input_min": module.input_min.data.clone(),
+                "input_max": module.input_max.data.clone(),
+                "output_min": module.output_min.data.clone(),
+                "output_max": module.output_max.data.clone(),
+            }
         new_mod = PatchedClippableLinear(
             linear.in_features,
             linear.out_features,
-            bias=bias,
-            clip_fn=module.clip_fn,
+            use_clipped=module.use_clipped_linears,
+            clamp_buffers=clamp_bufs,
         )
         new_mod.weight.data.copy_(linear.weight.data)
         setattr(parent, attr, new_mod)
